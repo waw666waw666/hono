@@ -11,16 +11,33 @@ const countTrailingSlashes = (path: string): number => {
   return path.length - index
 }
 
-const getPathPrefixLength = (c: Context, pathPrefix: string, routePath: string): number => {
-  if (!/[:*]/.test(pathPrefix)) {
-    return pathPrefix.length
-  }
-
+const getPathPrefixRange = (
+  c: Context,
+  pathPrefix: string,
+  routePath: string
+): { start: number; end: number } => {
   const path = c.req.path
+  // Segments of the whole matched route, without the trailing wildcard.
+  const routeSegments = splitRoutingPath(routePath.replace(/\/?\*$/, '')).filter(
+    (segment) => segment !== ''
+  )
+  const prefixSegments = splitRoutingPath(pathPrefix).filter((segment) => segment !== '')
+  // `pathPrefix` is the tail of the matched route. Segments in front of it
+  // were added by grouping (e.g. `route()`) and are preserved: the range up
+  // to `start` stays in the forwarded path, only the range up to `end` (the
+  // mount's own prefix) is removed.
+  const preservedCount = Math.max(routeSegments.length - prefixSegments.length, 0)
+  const segments = routeSegments.length >= prefixSegments.length ? routeSegments : prefixSegments
+
   const matchResult = c.req[GET_MATCH_RESULT]
   const paramNames = new Set<string>()
   let length = 0
-  for (const part of splitRoutingPath(pathPrefix)) {
+  let start = 0
+  for (let i = 0; i < segments.length; i++) {
+    if (i === preservedCount) {
+      start = length
+    }
+    const part = segments[i]
     if (part[0] === ':' && part.endsWith('}?')) {
       throw new Error(
         `mount(): Optional regular expression parameters are not supported in "${routePath}".`
@@ -47,7 +64,10 @@ const getPathPrefixLength = (c: Context, pathPrefix: string, routePath: string):
       length += part.length + 1
     }
   }
-  return length
+  if (segments.length === preservedCount) {
+    start = length
+  }
+  return { start, end: length }
 }
 
 export const createMountedRequest = (
@@ -58,13 +78,16 @@ export const createMountedRequest = (
   if (/[^/]\*$/.test(routePath)) {
     throw new Error(`mount(): Wildcard must follow "/" in "${routePath}".`)
   }
-  const prefixLength = getPathPrefixLength(c, pathPrefix, routePath)
-  const path = c.req.path.slice(prefixLength) || '/'
+  const { start, end } = getPathPrefixRange(c, pathPrefix, routePath)
+  const rest = c.req.path.slice(end)
+  // Segments before `start` (added by grouping such as `route()`) are kept,
+  // only the mount's own prefix between `start` and `end` is removed.
+  const path = c.req.path.slice(0, start) + rest || '/'
   // URL parsing removes dot segments, so the child would not see the path the parent routed.
   if (
-    prefixLength > c.req.path.length ||
-    path[0] !== '/' ||
-    /\/(?:\.|%2e){1,2}(?:\/|$)/i.test(path)
+    end > c.req.path.length ||
+    (rest !== '' && rest[0] !== '/') ||
+    /\/(?:\.|%2e){1,2}(?:\/|$)/i.test(rest)
   ) {
     throw new HTTPException(400, { message: 'Invalid mounted path' })
   }

@@ -2634,17 +2634,57 @@ describe('Optional parameters', () => {
 describe('app.mount()', () => {
   describe('Basic', () => {
     it.each([
-      ['/api', '/api/x/foo'],
-      ['/:tenant', '/acme/x/foo'],
-    ])('Should strip the route() prefix %s', async (base, input) => {
-      const child = new Hono()
-      child.mount('/x', (req) => new Response(getPath(req)))
+      ['/api', '/api/x/foo', '/api/foo'],
+      ['/:tenant', '/acme/x/foo', '/acme/foo'],
+    ])(
+      'Should strip only the mount path under the route() prefix %s',
+      async (base, input, expected) => {
+        const child = new Hono()
+        child.mount('/x', (req) => new Response(getPath(req)))
+        const app = new Hono()
+        app.route(base, child)
+
+        const res = await app.request(input)
+        expect(res.status).toBe(200)
+        expect(await res.text()).toBe(expected)
+      }
+    )
+
+    it.each([
+      ['/prefix/sub', '/prefix/sub'],
+      ['/prefix', '/prefix'],
+      ['/prefix/', '/prefix/'],
+    ])('Should forward the full path for mount("/") under route() %s', async (input, expected) => {
       const app = new Hono()
-      app.route(base, child)
+      app.route(
+        '/prefix',
+        new Hono().mount('/', (req) => new Response(getPath(req)))
+      )
 
       const res = await app.request(input)
       expect(res.status).toBe(200)
-      expect(await res.text()).toBe('/foo')
+      expect(await res.text()).toBe(expected)
+    })
+
+    it('Should forward the route() prefix for mount("/") under a dynamic route() prefix', async () => {
+      const app = new Hono()
+      app.route(
+        '/:tenant',
+        new Hono().mount('/', (req) => new Response(getPath(req)))
+      )
+
+      const res = await app.request('/acme/sub')
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('/acme/sub')
+    })
+
+    it('Should still strip the basePath() prefix for mount("/")', async () => {
+      const app = new Hono().basePath('/prefix')
+      app.mount('/', (req) => new Response(getPath(req)))
+
+      const res = await app.request('/prefix/sub')
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('/sub')
     })
 
     const anotherApp = (req: Request, ...params: unknown[]) => {

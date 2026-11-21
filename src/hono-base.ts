@@ -385,7 +385,10 @@ class Hono<
         }
     const defaultReplaceRequest = (c: Context): Request => {
       const mountedRoutePath = routePath(c)
-      return createMountedRequest(c, mountedRoutePath.replace(/\/?\*$/, ''), mountedRoutePath)
+      // Strip only this app's own base path and the mount path. Prefixes that
+      // `route()` added when this app was grouped into a parent app are part
+      // of the matched route path, but they are not the mount's to strip.
+      return createMountedRequest(c, mergePath(this._basePath, path), mountedRoutePath)
     }
 
     const handler: MiddlewareHandler = async (c, next) => {
